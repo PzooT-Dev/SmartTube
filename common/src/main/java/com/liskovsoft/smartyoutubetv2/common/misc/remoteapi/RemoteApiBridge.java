@@ -133,7 +133,7 @@ public class RemoteApiBridge {
             } else if (player.getPlayWhenReady()) {
                 state.put("state", "buffering");
             } else {
-                state.put("state", "idle");
+                state.put("state", "paused");
             }
 
             Video video = sPresenter.getVideo();
