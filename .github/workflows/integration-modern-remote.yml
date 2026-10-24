@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   combined:
@@ -94,13 +94,15 @@ jobs:
           git status --short
           git log --oneline -5
           git diff upstream/master...HEAD --stat | tee combined-stat.txt
-          # Both upstream PRs contain pre-existing trailing whitespace. Do not make
-          # unrelated formatting cleanup part of this integration merge.
           git diff upstream/master...HEAD --check > combined-whitespace.txt || true
       - name: Build combined universal APK
         run: |
           chmod +x gradlew
           ./gradlew :smarttubetv:assembleStstableDebug
+      - name: Publish verified combined branch
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          git push --force origin HEAD:refs/heads/modern-remote-combined
       - name: Upload combined universal APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
