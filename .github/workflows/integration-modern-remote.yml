@@ -55,23 +55,19 @@ jobs:
           git merge --no-ff --no-commit pr-5896
           rc=$?
           set -e
-
           if [ $rc -ne 0 ]; then
             git diff --name-only --diff-filter=U | tee remote-conflicts.txt
             mapfile -t conflicts < remote-conflicts.txt
-
             mother='common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/MotherActivity.java'
             if [ ${#conflicts[@]} -eq 1 ] && [ "${conflicts[0]}" = "$mother" ]; then
               python3 - <<'PY'
           from pathlib import Path
-
           p = Path('common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/MotherActivity.java')
           s = p.read_text()
           start = s.index('<<<<<<< HEAD')
           end = s.index('>>>>>>> pr-5896', start) + len('>>>>>>> pr-5896')
           resolved = '''        // Keep Remote API activity bookkeeping while preserving the current\n        // screensaver lifecycle from upstream.\n        if (sCurrentActivity == this) {\n            sCurrentActivity = null;\n        }\n\n        // Stop managing the screensaver so a paused activity cannot keep the display awake.\n        mScreensaverManager.suspend();\n    }\n\n    @Override\n    protected void onDestroy() {\n        if (mScreensaverManager != null) {\n            mScreensaverManager.cleanup();\n        }\n\n        super.onDestroy();'''
-          s = s[:start] + resolved + s[end:]
-          p.write_text(s)
+          p.write_text(s[:start] + resolved + s[end:])
           PY
               git add "$mother"
             else
@@ -81,23 +77,28 @@ jobs:
               exit 1
             fi
           fi
-
           git commit -m 'feat: integrate mature Remote API with Modern UI'
 
       - name: Restore paused player state semantics
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path('common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/remoteapi/RemoteApiBridge.java')
           s = p.read_text()
-          old = '''        if (player.isPlaying()) {\n            state.put("state", "playing");\n        } else if (player.getPlayWhenReady()) {\n            state.put("state", "buffering");\n        } else {\n            state.put("state", "idle");\n        }'''
-          new = '''        if (player.isPlaying()) {\n            state.put("state", "playing");\n        } else if (player.getPlayWhenReady()) {\n            state.put("state", "buffering");\n        } else {\n            state.put("state", "paused");\n        }'''
-          if old not in s:
-              raise SystemExit('RemoteApiBridge state block changed; refusing blind paused-state patch')
-          p.write_text(s.replace(old, new, 1))
+          marker = 'if (player.isPlaying()) {'
+          start = s.find(marker)
+          if start < 0:
+              raise SystemExit('RemoteApiBridge playing-state block not found; refusing blind patch')
+          idle = 'state.put("state", "idle");'
+          pos = s.find(idle, start)
+          if pos < 0:
+              raise SystemExit('RemoteApiBridge initialized idle state not found; refusing blind patch')
+          before = s[:pos]
+          after = s[pos + len(idle):]
+          p.write_text(before + 'state.put("state", "paused");' + after)
           PY
           git add common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/remoteapi/RemoteApiBridge.java
+          git diff --cached --check
           git commit -m 'fix: report paused state through Remote API'
 
       - name: Record integration diagnostics
