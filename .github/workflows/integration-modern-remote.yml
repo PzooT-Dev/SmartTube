@@ -6,6 +6,11 @@ on:
       - modern-remote-integration
     paths:
       - '.github/workflows/integration-modern-remote.yml'
+  pull_request:
+    branches:
+      - akver
+    paths:
+      - '.github/workflows/integration-modern-remote.yml'
   workflow_dispatch:
 
 permissions:
@@ -55,21 +60,17 @@ jobs:
             git diff --name-only --diff-filter=U | tee remote-conflicts.txt
             mapfile -t conflicts < remote-conflicts.txt
 
-            # Audited conflict: current SmartTube owns screensaver lifecycle;
-            # Remote API only needs the active MotherActivity bookkeeping.
-            mother='smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/common/MotherActivity.java'
+            mother='common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/MotherActivity.java'
             if [ ${#conflicts[@]} -eq 1 ] && [ "${conflicts[0]}" = "$mother" ]; then
-              git checkout --ours -- "$mother"
               python3 - <<'PY'
           from pathlib import Path
 
-          p = Path('smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/common/MotherActivity.java')
+          p = Path('common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/MotherActivity.java')
           s = p.read_text()
-          needle = '''    @Override\n    protected void onPause() {\n        super.onPause();\n'''
-          replacement = '''    @Override\n    protected void onPause() {\n        super.onPause();\n\n        if (sCurrentActivity == this) {\n            sCurrentActivity = null;\n        }\n'''
-          if needle not in s:
-              raise SystemExit('MotherActivity onPause signature changed; refusing automatic resolution')
-          s = s.replace(needle, replacement, 1)
+          start = s.index('<<<<<<< HEAD')
+          end = s.index('>>>>>>> pr-5896', start) + len('>>>>>>> pr-5896')
+          resolved = '''        // Keep Remote API activity bookkeeping while preserving the current\n        // screensaver lifecycle from upstream.\n        if (sCurrentActivity == this) {\n            sCurrentActivity = null;\n        }\n\n        // Stop managing the screensaver so a paused activity cannot keep the display awake.\n        mScreensaverManager.suspend();\n    }\n\n    @Override\n    protected void onDestroy() {\n        if (mScreensaverManager != null) {\n            mScreensaverManager.cleanup();\n        }\n\n        super.onDestroy();'''
+          s = s[:start] + resolved + s[end:]
           p.write_text(s)
           PY
               git add "$mother"
