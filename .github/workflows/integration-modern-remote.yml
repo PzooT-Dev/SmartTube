@@ -6,6 +6,11 @@ on:
       - modern-remote-integration
     paths:
       - '.github/workflows/integration-modern-remote.yml'
+  pull_request:
+    branches:
+      - akver
+    paths:
+      - '.github/workflows/integration-modern-remote.yml'
   workflow_dispatch:
 
 permissions:
@@ -21,21 +26,18 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
-
       - name: Fetch upstream and PR 6334
         run: |
           git remote add upstream https://github.com/yuliskov/SmartTube.git || true
           git fetch upstream master pull/6334/head:pr-6334
           git checkout --detach upstream/master
           git submodule update --init --recursive
-
       - name: Apply PR 6334 and capture conflicts
         id: modern_merge
         shell: bash
@@ -57,7 +59,6 @@ jobs:
           fi
           echo 'clean=true' >> "$GITHUB_OUTPUT"
           echo '### PR #6334 applies cleanly to current upstream master' >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload PR 6334 conflict diagnostics
         if: steps.modern_merge.outputs.clean != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -67,13 +68,11 @@ jobs:
             modern-conflicts.txt
             modern-conflict.diff
           if-no-files-found: warn
-
       - name: Build PR 6334 on current upstream
         if: steps.modern_merge.outputs.clean == 'true'
         run: |
           chmod +x gradlew
           ./gradlew :smarttubetv:assembleStstableDebug
-
       - name: Upload modern UI universal APK
         if: steps.modern_merge.outputs.clean == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -91,13 +90,11 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-
       - name: Fetch upstream and PR 5896
         run: |
           git remote add upstream https://github.com/yuliskov/SmartTube.git || true
           git fetch upstream master pull/5896/head:pr-5896
           git checkout --detach upstream/master
-
       - name: Probe PR 5896 merge and capture conflicts
         id: remote_merge
         shell: bash
@@ -119,7 +116,6 @@ jobs:
           fi
           echo 'clean=true' >> "$GITHUB_OUTPUT"
           echo '### PR #5896 merges cleanly to current upstream master' >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload PR 5896 conflict diagnostics
         if: steps.remote_merge.outputs.clean != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
