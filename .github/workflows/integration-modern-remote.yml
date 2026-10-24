@@ -1,14 +1,9 @@
-name: Modern UI + Remote API integration probe
+name: Modern UI + Remote API combined build
 
 on:
   push:
     branches:
       - modern-remote-integration
-    paths:
-      - '.github/workflows/integration-modern-remote.yml'
-  pull_request:
-    branches:
-      - akver
     paths:
       - '.github/workflows/integration-modern-remote.yml'
   workflow_dispatch:
@@ -17,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  modern-ui:
-    name: Stage A - current upstream + PR 6334
+  combined:
+    name: Modern UI + mature Remote API
     runs-on: ubuntu-latest
     steps:
       - name: Checkout integration branch
@@ -26,102 +21,110 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: Fetch upstream and PR 6334
+
+      - name: Fetch current upstream and integration PRs
         run: |
           git remote add upstream https://github.com/yuliskov/SmartTube.git || true
-          git fetch upstream master pull/6334/head:pr-6334
+          git fetch upstream master pull/6334/head:pr-6334 pull/5896/head:pr-5896
           git checkout --detach upstream/master
           git submodule update --init --recursive
-      - name: Apply PR 6334 and capture conflicts
-        id: modern_merge
-        shell: bash
-        run: |
-          set +e
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git cherry-pick 9adaa83b5517ee912c164e015b7429569f0078c2
-          rc=$?
-          if [ $rc -ne 0 ]; then
-            echo '### PR #6334 conflicts' >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            git status --short >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            git diff --name-only --diff-filter=U | tee modern-conflicts.txt
-            git diff --cc > modern-conflict.diff
-            echo 'clean=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo 'clean=true' >> "$GITHUB_OUTPUT"
-          echo '### PR #6334 applies cleanly to current upstream master' >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload PR 6334 conflict diagnostics
-        if: steps.modern_merge.outputs.clean != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pr-6334-conflicts
-          path: |
-            modern-conflicts.txt
-            modern-conflict.diff
-          if-no-files-found: warn
-      - name: Build PR 6334 on current upstream
-        if: steps.modern_merge.outputs.clean == 'true'
-        run: |
-          chmod +x gradlew
-          ./gradlew :smarttubetv:assembleStstableDebug
-      - name: Upload modern UI universal APK
-        if: steps.modern_merge.outputs.clean == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: SmartTube-current-plus-6334
-          path: smarttubetv/build/outputs/apk/ststable/debug/*_universal.apk
-          if-no-files-found: error
 
-  remote-api:
-    name: Stage B probe - current upstream + PR 5896
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout integration branch
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          fetch-depth: 0
-          submodules: recursive
-      - name: Fetch upstream and PR 5896
+      - name: Apply Modern UI PR 6334
         run: |
-          git remote add upstream https://github.com/yuliskov/SmartTube.git || true
-          git fetch upstream master pull/5896/head:pr-5896
-          git checkout --detach upstream/master
-      - name: Probe PR 5896 merge and capture conflicts
+          git cherry-pick 9adaa83b5517ee912c164e015b7429569f0078c2
+
+      - name: Merge mature Remote API PR 5896
         id: remote_merge
         shell: bash
         run: |
           set +e
-          git config user.name github-actions
-          git config user.email github-actions@github.com
           git merge --no-ff --no-commit pr-5896
           rc=$?
+          set -e
+
           if [ $rc -ne 0 ]; then
-            echo '### PR #5896 conflicts' >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            git status --short >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
             git diff --name-only --diff-filter=U | tee remote-conflicts.txt
-            git diff --cc > remote-conflict.diff
-            echo 'clean=false' >> "$GITHUB_OUTPUT"
-            exit 0
+            mapfile -t conflicts < remote-conflicts.txt
+
+            # Audited conflict: current SmartTube owns screensaver lifecycle;
+            # Remote API only needs the active MotherActivity bookkeeping.
+            mother='smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/common/MotherActivity.java'
+            if [ ${#conflicts[@]} -eq 1 ] && [ "${conflicts[0]}" = "$mother" ]; then
+              git checkout --ours -- "$mother"
+              python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/common/MotherActivity.java')
+          s = p.read_text()
+          needle = '''    @Override\n    protected void onPause() {\n        super.onPause();\n'''
+          replacement = '''    @Override\n    protected void onPause() {\n        super.onPause();\n\n        if (sCurrentActivity == this) {\n            sCurrentActivity = null;\n        }\n'''
+          if needle not in s:
+              raise SystemExit('MotherActivity onPause signature changed; refusing automatic resolution')
+          s = s.replace(needle, replacement, 1)
+          p.write_text(s)
+          PY
+              git add "$mother"
+            else
+              echo 'Unexpected Remote API merge conflicts; refusing automatic resolution.'
+              git status --short
+              git diff --cc > remote-conflict.diff
+              exit 1
+            fi
           fi
-          echo 'clean=true' >> "$GITHUB_OUTPUT"
-          echo '### PR #5896 merges cleanly to current upstream master' >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload PR 5896 conflict diagnostics
-        if: steps.remote_merge.outputs.clean != 'true'
+
+          git commit -m 'feat: integrate mature Remote API with Modern UI'
+
+      - name: Restore paused player state semantics
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/remoteapi/RemoteApiBridge.java')
+          s = p.read_text()
+          old = '''        if (player.isPlaying()) {\n            state.put("state", "playing");\n        } else if (player.getPlayWhenReady()) {\n            state.put("state", "buffering");\n        } else {\n            state.put("state", "idle");\n        }'''
+          new = '''        if (player.isPlaying()) {\n            state.put("state", "playing");\n        } else if (player.getPlayWhenReady()) {\n            state.put("state", "buffering");\n        } else {\n            state.put("state", "paused");\n        }'''
+          if old not in s:
+              raise SystemExit('RemoteApiBridge state block changed; refusing blind paused-state patch')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git add common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/remoteapi/RemoteApiBridge.java
+          git commit -m 'fix: report paused state through Remote API'
+
+      - name: Record integration diagnostics
+        run: |
+          git status --short
+          git log --oneline -5
+          git diff upstream/master...HEAD --stat | tee combined-stat.txt
+          git diff upstream/master...HEAD --check
+
+      - name: Build combined universal APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :smarttubetv:assembleStstableDebug
+
+      - name: Upload combined universal APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-5896-conflicts
+          name: SmartTube-modern-ui-remote-api
+          path: smarttubetv/build/outputs/apk/ststable/debug/*_universal.apk
+          if-no-files-found: error
+
+      - name: Upload integration diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: modern-remote-integration-diagnostics
           path: |
+            combined-stat.txt
             remote-conflicts.txt
             remote-conflict.diff
-          if-no-files-found: warn
+          if-no-files-found: ignore
