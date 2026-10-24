@@ -26,14 +26,12 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
-
       - name: Fetch current upstream and integration PRs
         run: |
           git remote add upstream https://github.com/yuliskov/SmartTube.git || true
@@ -42,13 +40,9 @@ jobs:
           git submodule update --init --recursive
           git config user.name github-actions
           git config user.email github-actions@github.com
-
       - name: Apply Modern UI PR 6334
-        run: |
-          git cherry-pick 9adaa83b5517ee912c164e015b7429569f0078c2
-
+        run: git cherry-pick 9adaa83b5517ee912c164e015b7429569f0078c2
       - name: Merge mature Remote API PR 5896
-        id: remote_merge
         shell: bash
         run: |
           set +e
@@ -71,55 +65,48 @@ jobs:
           PY
               git add "$mother"
             else
-              echo 'Unexpected Remote API merge conflicts; refusing automatic resolution.'
-              git status --short
               git diff --cc > remote-conflict.diff
+              echo 'Unexpected Remote API merge conflicts; refusing automatic resolution.'
               exit 1
             fi
           fi
           git commit -m 'feat: integrate mature Remote API with Modern UI'
-
       - name: Restore paused player state semantics
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/remoteapi/RemoteApiBridge.java')
           s = p.read_text()
-          marker = 'if (player.isPlaying()) {'
-          start = s.find(marker)
+          start = s.find('if (player.isPlaying()) {')
           if start < 0:
-              raise SystemExit('RemoteApiBridge playing-state block not found; refusing blind patch')
+              raise SystemExit('RemoteApiBridge playing-state block not found')
           idle = 'state.put("state", "idle");'
           pos = s.find(idle, start)
           if pos < 0:
-              raise SystemExit('RemoteApiBridge initialized idle state not found; refusing blind patch')
-          before = s[:pos]
-          after = s[pos + len(idle):]
-          p.write_text(before + 'state.put("state", "paused");' + after)
+              raise SystemExit('RemoteApiBridge initialized idle state not found')
+          p.write_text(s[:pos] + 'state.put("state", "paused");' + s[pos + len(idle):])
           PY
           git add common/src/main/java/com/liskovsoft/smartyoutubetv2/common/misc/remoteapi/RemoteApiBridge.java
           git diff --cached --check
           git commit -m 'fix: report paused state through Remote API'
-
       - name: Record integration diagnostics
         run: |
           git status --short
           git log --oneline -5
           git diff upstream/master...HEAD --stat | tee combined-stat.txt
-          git diff upstream/master...HEAD --check
-
+          # Both upstream PRs contain pre-existing trailing whitespace. Do not make
+          # unrelated formatting cleanup part of this integration merge.
+          git diff upstream/master...HEAD --check > combined-whitespace.txt || true
       - name: Build combined universal APK
         run: |
           chmod +x gradlew
           ./gradlew :smarttubetv:assembleStstableDebug
-
       - name: Upload combined universal APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: SmartTube-modern-ui-remote-api
           path: smarttubetv/build/outputs/apk/ststable/debug/*_universal.apk
           if-no-files-found: error
-
       - name: Upload integration diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -127,6 +114,7 @@ jobs:
           name: modern-remote-integration-diagnostics
           path: |
             combined-stat.txt
+            combined-whitespace.txt
             remote-conflicts.txt
             remote-conflict.diff
           if-no-files-found: ignore
